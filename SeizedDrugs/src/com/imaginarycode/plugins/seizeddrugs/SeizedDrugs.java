@@ -536,7 +536,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         return ChatColor.translateAlternateColorCodes('&', m);
     }
 
-    public class BeatdownHealRunnable extends Thread {
+    public class BeatdownHealRunnable implements Runnable {
         @Override
         public void run() {
             int m = getConfig().getInt("beatdown-health", 20);
