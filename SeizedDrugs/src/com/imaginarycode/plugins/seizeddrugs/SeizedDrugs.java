@@ -90,7 +90,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
 
     public Integer getBeatdownHealth(String player) {
         if (!beatdownInfo.containsKey(player)) {
-            setBeatdownHealth(player, getConfig().getInt("beatdown-health", 20));
+            return getConfig().getInt("beatdown-health", 20);
         }
         return beatdownInfo.get(player);
     }
@@ -103,12 +103,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
      * @param health an Integer
      */
     public void setBeatdownHealth(String player, Integer health) {
-        if (beatdownInfo.containsKey(player)) {
-            beatdownInfo.remove(player);
-            beatdownInfo.put(player, health);
-        } else {
-            beatdownInfo.put(player, health);
-        }
+        beatdownInfo.put(player, health);
     }
 
     private boolean canBeatHere(Player c) {
@@ -426,9 +421,6 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
                     copModes.put(evt.getPlayer().getName(), Mode.DRUG_SEIZE);
                 }
             }
-        }
-        if (!beatdownInfo.containsKey(evt.getPlayer().getName())) {
-            setBeatdownHealth(evt.getPlayer().getName(), getConfig().getInt("beatdown-health"));
         }
     }
 
