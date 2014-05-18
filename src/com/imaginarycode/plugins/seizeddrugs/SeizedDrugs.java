@@ -47,12 +47,8 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.mcstats.Metrics;
 
 import java.io.*;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /**
  * @author tux
@@ -69,12 +65,11 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         BEATDOWN
     }
 
-    private Map<String, Integer> copInfo = new HashMap<String, Integer>();
-    private Map<String, Integer> beatdownInfo = new HashMap<String, Integer>();
-    private Map<String, Mode> copModes = new HashMap<String, Mode>();
+    private Map<String, Integer> copInfo = new HashMap<>();
+    private Map<String, Integer> beatdownInfo = new HashMap<>();
+    private Map<String, Mode> copModes = new HashMap<>();
     private Random rnd = new Random();
     private WorldGuardPlugin wgplugin = null;
-    private Logger log = Logger.getLogger("Minecraft");
     private static SeizedDrugsAPI api = null;
 
     public static SeizedDrugsAPI getApi() {
@@ -223,14 +218,14 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         getServer().getScheduler().scheduleSyncRepeatingTask(this, new BeatdownHealRunnable(), 1200L, 1200L);
         getConfig().options().copyDefaults(true);
         try {
-            log.info("Starting Metrics...");
+            getLogger().info("Starting Metrics...");
             new Metrics(this).start();
-            log.info("Metrics successfully enabled!");
+            getLogger().info("Metrics successfully enabled!");
         } catch (IOException e) {
-            log.info("Could not enable Metrics :(");
+            getLogger().info("Could not enable Metrics :(");
         }
         if (!getConfig().contains("drugs")) {
-            log.info("Adding default drug configuration.");
+            getLogger().info("Adding default drug configuration.");
             getConfig().set("drugs.353", true);
             getConfig().set("drugs.339", true);
             getConfig().set("drugs.372", true);
@@ -250,12 +245,12 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         }
         Plugin wgTmpPlugin = getServer().getPluginManager().getPlugin("WorldGuard");
         if (wgTmpPlugin == null) {
-            log.info("WorldGuard not found. Region-specific features are disabled.");
+            getLogger().info("WorldGuard not found. Region-specific features are disabled.");
         } else {
             wgplugin = (WorldGuardPlugin) wgTmpPlugin;
         }
         api = new SeizedDrugsAPI(this);
-        log.info("SeizedDrugs plugin enabled");
+        getLogger().info("SeizedDrugs plugin enabled");
     }
 
     @SuppressWarnings("unchecked")
@@ -270,7 +265,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
             s.close();
             return tmp;
         } catch (IOException ex) {
-            log.log(Level.INFO, "Unable to load object!", ex);
+            getLogger().log(Level.INFO, "Unable to load object!", ex);
             return null;
         }
     }
@@ -281,7 +276,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
             s.writeObject(data);
             s.close();
         } catch (IOException ex) {
-            log.log(Level.INFO, "Unable to save object!", ex);
+            getLogger().log(Level.INFO, "Unable to save object!", ex);
         }
     }
 
@@ -294,7 +289,6 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         copModes = null;
         beatdownInfo = null;
         rnd = null;
-        log = null;
     }
 
     private boolean isDrug(int it, int id) {
@@ -532,13 +526,13 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         @Override
         public void run() {
             int m = getConfig().getInt("beatdown-health", 20);
-            for (Player p : getServer().getOnlinePlayers()) {
-                int s = getBeatdownHealth(p.getName());
-                if (s < m) {
-                    if (s + 1 == m) {
-                        beatdownInfo.remove(p.getName());
+            for (Iterator<Map.Entry<String, Integer>> it = beatdownInfo.entrySet().iterator(); it.hasNext(); ) {
+                Map.Entry<String, Integer> entry = it.next();
+                if (entry.getValue() < m) {
+                    if (entry.getValue() + 1 == m) {
+                        it.remove();
                     } else {
-                        setBeatdownHealth(p.getName(), getBeatdownHealth(p.getName()) + 1);
+                        entry.setValue(entry.getValue() + 1);
                     }
                 }
             }
