@@ -226,16 +226,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         }
         if (!getConfig().contains("drugs")) {
             getLogger().info("Adding default drug configuration.");
-            getConfig().set("drugs.353", true);
-            getConfig().set("drugs.339", true);
-            getConfig().set("drugs.372", true);
-            getConfig().set("drugs.296", true);
-            getConfig().set("drugs.351:2", true);
-            getConfig().set("drugs.351:1", true);
-            getConfig().set("drugs.40", true);
-            getConfig().set("drugs.39", true);
-            getConfig().set("drugs.351:15", true);
-            getConfig().set("drugs.351:3", true);
+            getConfig().set("drugs", Arrays.asList("353", "339", "372", "296", "351:1", "351:2", "351:3", "351:15", "40", "39"));
         }
         this.saveConfig();
         getServer().getPluginManager().registerEvents(this, this);
@@ -292,14 +283,16 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
     }
 
     private boolean isDrug(int it, int id) {
-        String b = "";
+        String b;
         if (id == 0) {
-            b = b + it;
+            b = Integer.toString(it);
         } else {
-            b = b + it + ":" + id;
+            b = it + ":" + id;
         }
 
-        return getConfig().getBoolean("drugs." + b, false) || getConfig().getBoolean("drugs." + it + ":*", false);
+        List<String> allowed = getConfig().getStringList("drugs");
+
+        return allowed.contains("drugs." + b) || allowed.contains("drugs." + it + ":*");
     }
 
     private boolean canUseMode(String user, Mode m) {
