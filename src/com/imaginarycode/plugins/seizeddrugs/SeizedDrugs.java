@@ -28,11 +28,14 @@
 
 package com.imaginarycode.plugins.seizeddrugs;
 
+import com.google.common.collect.ImmutableMap;
 import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
 import com.sk89q.worldguard.protection.ApplicableRegionSet;
 import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -44,10 +47,12 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.mcstats.Metrics;
+import org.yaml.snakeyaml.Yaml;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.logging.Level;
 
 /**
@@ -83,7 +88,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
      * @return health value as a Integer
      */
 
-    public Integer getBeatdownHealth(String player) {
+    public int getBeatdownHealth(String player) {
         if (!beatdownInfo.containsKey(player)) {
             return getConfig().getInt("beatdown-health", 20);
         }
@@ -125,8 +130,8 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
             return BeatdownResult.MISS;
         } else {
             Integer s = beatdownInfo.get(caught.getName()) - getConfig().getInt("per-beat-health");
-            beatdownInfo.remove(caught.getName());
             if (s <= 0) {
+                beatdownInfo.remove(caught.getName());
                 return BeatdownResult.BEAT;
             } else {
                 beatdownInfo.put(caught.getName(), s);
@@ -138,15 +143,15 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
     private boolean badCopHandler(Player policeman, boolean good) {
         // Bad donut eater, bad!
         if (!good) {
-            if (!copInfo.containsKey(policeman.getName())) {
-                copInfo.put(policeman.getName(), 1);
+            if (!copInfo.containsKey(policeman.getUniqueId().toString())) {
+                copInfo.put(policeman.getUniqueId().toString(), 1);
             } else {
-                copInfo.put(policeman.getName(), copInfo.get(policeman.getName()) + 1);
+                copInfo.put(policeman.getUniqueId().toString(), copInfo.get(policeman.getUniqueId().toString()) + 1);
             }
             return false;
         } else {
-            if (copInfo.containsKey(policeman.getName())) {
-                copInfo.remove(policeman.getName());
+            if (copInfo.containsKey(policeman.getUniqueId().toString())) {
+                copInfo.remove(policeman.getUniqueId().toString());
             }
         }
         return true;
@@ -200,12 +205,12 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
      * Given a cop's name, return how many incorrectly-performed seizures they have performed.
      * This function could be used to inflict other punishments that are more than the vanilla jailing.
      *
-     * @param co The cop's name (as a String, not a Player)
+     * @param player The cop's name (as a OfflinePlayer)
      * @return the times they have incorrectly caught people
      */
-    public Integer getCopIncorrectSeizure(String co) {
-        if (copInfo.containsKey(co)) {
-            return copInfo.get(co);
+    public int getCopIncorrectSeizure(OfflinePlayer player) {
+        if (copInfo.containsKey(player.getUniqueId().toString())) {
+            return copInfo.get(player.getUniqueId().toString());
         } else {
             return 0;
         }
@@ -216,24 +221,42 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
     public void onEnable() {
         getDataFolder().mkdirs();
         getServer().getScheduler().scheduleSyncRepeatingTask(this, new BeatdownHealRunnable(), 1200L, 1200L);
+        getServer().getScheduler().runTaskTimerAsynchronously(this, new Runnable() {
+            @Override
+            public void run() {
+                saveCopData();
+            }
+        }, 1200L, 1200L);
         getConfig().options().copyDefaults(true);
-        try {
-            getLogger().info("Starting Metrics...");
-            new Metrics(this).start();
-            getLogger().info("Metrics successfully enabled!");
-        } catch (IOException e) {
-            getLogger().info("Could not enable Metrics :(");
-        }
+
         if (!getConfig().contains("drugs")) {
             getLogger().info("Adding default drug configuration.");
             getConfig().set("drugs", Arrays.asList("353", "339", "372", "296", "351:1", "351:2", "351:3", "351:15", "40", "39"));
         }
+
         this.saveConfig();
         getServer().getPluginManager().registerEvents(this, this);
-        Object tmp = loadSerializedData(this.getDataFolder().getAbsolutePath() + "/badCops.dat");
-        if (tmp != null && tmp instanceof HashMap<?, ?>) {
-            copInfo = (HashMap<String, Integer>) tmp;
+
+        Yaml yaml = new Yaml();
+
+        File yamlData = new File(getDataFolder(), "data.yml");
+        if (yamlData.exists()) {
+            try (InputStream stream = new FileInputStream(yamlData)) {
+                Map<String, Object> objectMap = yaml.loadAs(stream, Map.class);
+                copInfo = (Map)objectMap.get("cop-data");
+            } catch (IOException e) {
+                getLogger().info("Could not load data, continuing...");
+            }
+        } else {
+            try {
+                yamlData.createNewFile();
+            } catch (IOException e) {
+                getLogger().log(Level.SEVERE, "Could not create data file!", e);
+                getServer().getPluginManager().disablePlugin(this);
+                return;
+            }
         }
+
         Plugin wgTmpPlugin = getServer().getPluginManager().getPlugin("WorldGuard");
         if (wgTmpPlugin == null) {
             getLogger().info("WorldGuard not found. Region-specific features are disabled.");
@@ -244,37 +267,27 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         getLogger().info("SeizedDrugs plugin enabled");
     }
 
-    @SuppressWarnings("unchecked")
-    private <T> T loadSerializedData(String filePath) {
+    private void saveCopData() {
         try {
-            T tmp = null;
-            ObjectInputStream s = new ObjectInputStream(new FileInputStream(filePath));
-            try {
-                tmp = (T) s.readObject();
-            } catch (ClassNotFoundException ignored) {
+            Map<String, Integer> saved = Bukkit.getScheduler().callSyncMethod(this, new Callable<Map<String, Integer>>() {
+                @Override
+                public Map<String, Integer> call() throws Exception {
+                    return ImmutableMap.copyOf(copInfo);
+                }
+            }).get();
+            try (Writer stream = new FileWriter(new File(getDataFolder(), "data.yml"))) {
+                new Yaml().dump(ImmutableMap.of("cop-data", saved), stream);
+            } catch (IOException e) {
+                getLogger().log(Level.SEVERE, "Unable to save cop info", e);
             }
-            s.close();
-            return tmp;
-        } catch (IOException ex) {
-            getLogger().log(Level.INFO, "Unable to load object!", ex);
-            return null;
-        }
-    }
-
-    private <T> void saveSerializedData(T data, String filePath) {
-        try {
-            ObjectOutputStream s = new ObjectOutputStream(new FileOutputStream(filePath));
-            s.writeObject(data);
-            s.close();
-        } catch (IOException ex) {
-            getLogger().log(Level.INFO, "Unable to save object!", ex);
+        } catch (InterruptedException | ExecutionException e) {
+            getLogger().log(Level.SEVERE, "Unable to save cop info", e);
         }
     }
 
     @Override
     public void onDisable() {
-        saveSerializedData(copInfo, this.getDataFolder().getAbsolutePath() + "/badCops.dat");
-        this.saveConfig();
+        saveCopData();
         wgplugin = null;
         copInfo = null;
         copModes = null;
@@ -295,7 +308,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         return allowed.contains("drugs." + b) || allowed.contains("drugs." + it + ":*");
     }
 
-    private boolean canUseMode(String user, Mode m) {
+    private boolean canUseMode(Player user, Mode m) {
         // Configuration
         if (getConfig().getBoolean("beatdown-only", false) && m == Mode.DRUG_SEIZE) {
             return false;
@@ -304,7 +317,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
             return false;
         }
         // Permissions
-        return !(m == Mode.DRUG_SEIZE && !getServer().getPlayerExact(user).hasPermission("seizeddrugs.use.seize")) && !(m == Mode.BEATDOWN && !getServer().getPlayerExact(user).hasPermission("seizeddrugs.use.beatdown"));
+        return !(m == Mode.DRUG_SEIZE && !user.hasPermission("seizeddrugs.use.seize")) && !(m == Mode.BEATDOWN && !user.hasPermission("seizeddrugs.use.beatdown"));
     }
 
     @Override
@@ -340,7 +353,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
             Mode s = copModes.get(sender.getName());
             switch (s) {
                 case BEATDOWN:
-                    if (canUseMode(sender.getName(), Mode.DRUG_SEIZE)) {
+                    if (canUseMode((Player) sender, Mode.DRUG_SEIZE)) {
                         copModes.remove(sender.getName());
                         copModes.put(sender.getName(), Mode.DRUG_SEIZE);
                         sender.sendMessage(ChatColor.GOLD + "Changed to drug seizing mode.");
@@ -349,7 +362,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
                     }
                     break;
                 case DRUG_SEIZE:
-                    if (canUseMode(sender.getName(), Mode.BEATDOWN)) {
+                    if (canUseMode((Player) sender, Mode.BEATDOWN)) {
                         copModes.remove(sender.getName());
                         copModes.put(sender.getName(), Mode.BEATDOWN);
                         sender.sendMessage(ChatColor.GOLD + "Changed to beatdown mode.");
@@ -375,7 +388,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
                 sender.sendMessage("You must specify the player to check.");
                 return true;
             }
-            sender.sendMessage("Incorrect seizures for " + args[1] + ": " + this.getCopIncorrectSeizure(args[1]));
+            sender.sendMessage("Incorrect seizures for " + args[1] + ": " + this.getCopIncorrectSeizure(Bukkit.getOfflinePlayer(args[1])));
         }
         if ("reset".equals(args[0])) {
             copInfo.clear();
@@ -441,7 +454,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         }
     }
 
-    private void executeJailServerCommand(String executor, String username, String duration) {
+    private void executeJailServerCommand(Player executor, Player username, String duration) {
         String command = getConfig().getString("jail-command");
 
         // Future SeizedJailsIntegration
@@ -456,32 +469,29 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         	return;
         }*/
 
-        command = command.replaceAll("%username%", username);
+        command = command.replaceAll("%username%", username.getName());
         command = command.replaceAll("%duration%", duration);
-        command = command.replaceAll("%cop%", executor);
+        command = command.replaceAll("%cop%", executor.getName());
         // CommandSender may vary.
         // config.yml will dictate if the command is to be executed as the cop or the console
         // The default is the console.
-        CommandSender s = getServer().getConsoleSender();
-        if (getConfig().getBoolean("run-command-as-cop")) {
-            s = getServer().getPlayer(executor);
-        }
+        CommandSender s = getConfig().getBoolean("run-command-as-cop") ? executor : getServer().getConsoleSender();
         getServer().dispatchCommand(s, command);
     }
 
     private void performSeize(Player cop, Player caught) {
         if (seize(cop, caught)) {
-            executeJailServerCommand(cop.getName(), caught.getName(), getConfig().getString("jail-duration-for-player"));
+            executeJailServerCommand(cop, caught, getConfig().getString("jail-duration-for-player"));
             caught.sendMessage(formatMessage(getConfig().getString("caught-player"), caught, cop));
             cop.sendMessage(formatMessage(getConfig().getString("cop-congratulation"), caught, cop));
         } else {
             int threshold = getConfig().getInt("cop-threshold");
             if (threshold > 0) {
                 // FUCK DA PO-LICE
-                Integer co = getCopIncorrectSeizure(cop.getName());
+                int co = getCopIncorrectSeizure(cop);
                 cop.sendMessage(formatMessage(getConfig().getString("cop-warning"), caught, cop));
                 if (co > threshold) {
-                    executeJailServerCommand(cop.getName(), cop.getName(), getConfig().getString("jail-duration-for-cop"));
+                    executeJailServerCommand(cop, cop, getConfig().getString("jail-duration-for-cop"));
                     cop.sendMessage(formatMessage(getConfig().getString("cop-jailed"), cop, cop));
                 }
             }
@@ -500,7 +510,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
             case BEAT:
                 cop.sendMessage(formatMessage(getConfig().getString("beatdown-beat"), caught, cop));
                 caught.sendMessage(getConfig().getString("beatdown-player"));
-                executeJailServerCommand(cop.getName(), caught.getName(), getConfig().getString("jail-duration-for-player"));
+                executeJailServerCommand(cop, caught, getConfig().getString("jail-duration-for-player"));
                 break;
         }
     }
@@ -511,7 +521,7 @@ public class SeizedDrugs extends JavaPlugin implements Listener {
         m = m.replace("%max%", Integer.toString(getConfig().getInt("beatdown-health", 20)));
         m = m.replace("%player%", player.getName());
         m = m.replace("%cop%", cop.getName());
-        m = m.replace("%times%", getCopIncorrectSeizure(cop.getName()).toString());
+        m = m.replace("%times%", Integer.toString(getCopIncorrectSeizure(cop)));
         return ChatColor.translateAlternateColorCodes('&', m);
     }
 
